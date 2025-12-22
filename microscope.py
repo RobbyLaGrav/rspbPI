@@ -22,7 +22,7 @@ controls = {
     "ExposureTime": 8000,        # microseconds (8 ms)
     "AnalogueGain": 1.0          # 1x gain
 }
-picam2.set_controls(controls)
+picam2.set_controls("AeEnable": True)
 
 print("Controls: c=capture, +/-=gain, [ ]=exposure, h=histogram, q=quit")
 
