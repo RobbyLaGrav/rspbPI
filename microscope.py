@@ -1,38 +1,28 @@
 
-# microscope_live.py
+# microscope_live_safe.py
 import time
 import cv2
 import numpy as np
-from picamera2 import Picamera2, Preview
+from picamera2 import Picamera2
 
-# Initialize camera
 picam2 = Picamera2()
 
-# Configure for preview (choose your resolution)
-config = picam2.create_video_configuration(
-    main={"size": (1280, 720), "format": "RGB888"},
-    controls={"FrameRate": 30}
+# Use preview configuration for live view
+config = picam2.create_preview_configuration(
+    main={"size": (1280, 720), "format": "RGB888"}
 )
 picam2.configure(config)
 picam2.start()
 
-# Set initial exposure/gain
-controls = {
-    "AeEnable": False,           # manual exposure
-    "ExposureTime": 8000,        # microseconds (8 ms)
-    "AnalogueGain": 1.0          # 1x gain
-}
+# Start with Auto Exposure ON to get a visible image
 picam2.set_controls({"AeEnable": True})
-
-print("Controls: c=capture, +/-=gain, [ ]=exposure, h=histogram, q=quit")
+print("Auto exposure enabled. Press m to switch to manual.")
 
 def draw_overlay(img):
-    # Crosshair + scale bar placeholder
     h, w = img.shape[:2]
     cv2.drawMarker(img, (w//2, h//2), color=(0, 255, 0),
                    markerType=cv2.MARKER_CROSS, markerSize=20, thickness=1)
-    # Add simple text overlay
-    cv2.putText(img, "Microscope Live (c=save, +/- gain, [ ] exposure, a=autofocus, q=quit)",
+    cv2.putText(img, "Microscope Live (c=save, m=manual AE off, +/- gain, [ ] exposure, q=quit)",
                 (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 1, cv2.LINE_AA)
 
 def save_image(frame):
@@ -41,53 +31,54 @@ def save_image(frame):
     cv2.imwrite(fname, frame)
     print(f"Saved: {fname}")
 
-def focus_metric(img_gray):
-    # Use variance of Laplacian as a contrast focus metric
-    return cv2.Laplacian(img_gray, cv2.CV_64F).var()
-
-# Live loop
-exposure = controls["ExposureTime"]
-gain = controls["AnalogueGain"]
+manual = False
+exposure = 30000  # start brighter for microscopy
+gain = 4.0
 
 while True:
     frame = picam2.capture_array()
+    # Print quick stats occasionally
+    if int(time.time()) % 5 == 0:
+        print(f"Stats: min={frame.min()} max={frame.max()} mean={frame.mean():.1f}")
+
     display = frame.copy()
     draw_overlay(display)
-    cv2.imshow("Microscope", display)
-    k = cv2.waitKey(1) & 0xFF
 
+    try:
+        cv2.imshow("Microscope", display)
+    except cv2.error:
+        # Headless environment; skip showing
+        pass
+
+    k = cv2.waitKey(1) & 0xFF
     if k == ord('q'):
         break
     elif k == ord('c'):
         save_image(frame)
-    elif k == ord('+'):
-        gain = min(gain + 0.1, 8.0)   # cap gain
+    elif k == ord('m'):
+        manual = not manual
+        if manual:
+            picam2.set_controls({"AeEnable": False, "ExposureTime": exposure, "AnalogueGain": gain})
+            print(f"Manual mode ON: Exposure={exposure}us, Gain={gain}x")
+        else:
+            picam2.set_controls({"AeEnable": True})
+            print("Auto exposure enabled.")
+    elif k == ord('+') and manual:
+        gain = min(gain + 0.5, 16.0)
         picam2.set_controls({"AnalogueGain": gain})
-        print(f"Gain: {gain:.2f}x")
-    elif k == ord('-'):
-        gain = max(gain - 0.1, 1.0)
+        print(f"Gain: {gain:.1f}x")
+    elif k == ord('-') and manual:
+        gain = max(gain - 0.5, 1.0)
         picam2.set_controls({"AnalogueGain": gain})
-        print(f"Gain: {gain:.2f}x")
-    elif k == ord(']'):
-        exposure = min(exposure + 1000, 80000)  # up to 80 ms
+        print(f"Gain: {gain:.1f}x")
+    elif k == ord(']') and manual:
+        exposure = min(exposure + 5000, 100000)  # up to 100 ms
         picam2.set_controls({"ExposureTime": exposure})
         print(f"Exposure: {exposure} us")
-    elif k == ord('['):
-        exposure = max(exposure - 1000, 1000)
+    elif k == ord('[') and manual:
+        exposure = max(exposure - 5000, 1000)
         picam2.set_controls({"ExposureTime": exposure})
         print(f"Exposure: {exposure} us")
-    elif k == ord('h'):
-        # Show histogram for exposure tuning
-        gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
-        hist = cv2.calcHist([gray],[0],None,[256],[0,256])
-        print("Histogram peaks (top 5 bins):", np.argsort(hist.ravel())[::-1][:5])
-    elif k == ord('a'):
-        # Basic autofocus: you move focus manually; script suggests best exposure for contrast
-        # (Full motor autofocus provided in section 5 below)
-        gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
-        m = focus_metric(gray)
-        print(f"Focus metric (Laplacian var): {m:.2f}")
 
 cv2.destroyAllWindows()
 picam2.stop()
-``
